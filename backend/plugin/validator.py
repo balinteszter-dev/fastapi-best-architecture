@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Final
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.common.enums import PluginLevelType
 from backend.core.path_conf import PLUGIN_DIR
@@ -163,6 +163,25 @@ class ExtendPluginConfigSchema(BaseModel):
         return v
 
 
+class CapabilityPluginConfigSchema(BaseModel):
+    """能力型插件配置模型"""
+
+    model_config = ConfigDict(extra='forbid')
+
+    plugin: PluginInfoSchema = Field(..., description='插件信息')
+    settings: dict[str, Any] = Field(default_factory=dict, description='配置项')
+
+    @field_validator('settings')
+    @classmethod
+    def validate_settings(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """校验配置项名称必须全大写"""
+        if v:
+            invalid_keys = [key for key in v if not key.isupper()]
+            if invalid_keys:
+                raise PluginConfigError(f'settings 配置项名称必须全大写，无效的配置项: {", ".join(invalid_keys)}')
+        return v
+
+
 def validate_plugin_config(plugin_name: str, config: dict[str, Any]) -> PluginLevelType:
     """
     校验插件配置
@@ -171,15 +190,16 @@ def validate_plugin_config(plugin_name: str, config: dict[str, Any]) -> PluginLe
     :param config: 插件配置字典
     :return:
     """
-    is_extend_plugin = 'api' in config
+    plugin_schema, plugin_level = (
+        (ExtendPluginConfigSchema, PluginLevelType.extend)
+        if 'api' in config
+        else (AppPluginConfigSchema, PluginLevelType.app)
+        if 'app' in config
+        else (CapabilityPluginConfigSchema, PluginLevelType.capability)
+    )
 
     try:
-        if is_extend_plugin:
-            ExtendPluginConfigSchema.model_validate(config)
-            plugin_level = PluginLevelType.extend
-        else:
-            AppPluginConfigSchema.model_validate(config)
-            plugin_level = PluginLevelType.app
+        plugin_schema.model_validate(config)
     except Exception as e:
         error_msg = str(e)
         # 格式化 Pydantic 错误信息
